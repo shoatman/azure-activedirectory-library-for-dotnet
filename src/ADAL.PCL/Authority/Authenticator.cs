@@ -26,6 +26,8 @@
 //------------------------------------------------------------------------------
 
 using System;
+using System.Collections.Generic;
+using System.Runtime.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -37,8 +39,35 @@ namespace Microsoft.IdentityModel.Clients.ActiveDirectory
         ADFS
     }
 
+    [DataContract]
+    internal sealed class InstanceDiscoveryResponse
+    {
+        [DataMember(Name = "tenant_discovery_endpoint")]
+        public string TenantDiscoveryEndpoint { get; set; }
+
+        [DataMember(Name = "preferred_network")]
+        public string PreferredNetwork { get; set; }
+
+        [DataMember(Name = "preferred_cache")]
+        public string PreferredCache { get; set; }
+
+        [DataMember(Name = "aliases")]
+        public string[] Aliases { get; set; }
+    }
+
     internal class Authenticator
     {
+        public string DefaultTrustedAuthority = "login.microsoftonline.com";
+        public HashSet<string> WhitelistedAuthorities = new HashSet<string>(new []
+        {
+            "login.windows.net",            // Microsoft Azure Worldwide - Used in validation scenarios where host is not this list 
+            "login.chinacloudapi.cn",       // Microsoft Azure China
+            "login.microsoftonline.de",     // Microsoft Azure Blackforest
+            "login-us.microsoftonline.com", // Microsoft Azure US Government - Legacy
+            "login.microsoftonline.us",     // Microsoft Azure US Government
+            "login.microsoftonline.com"     // Microsoft Azure Worldwide
+        });
+        private const string AuthorizeEndpointTemplate = "https://{host}/{tenant}/oauth2/authorize";
         private const string TenantlessTenantName = "Common";
 
         private static readonly AuthenticatorTemplateList AuthenticatorTemplateList = new AuthenticatorTemplateList();
@@ -77,26 +106,56 @@ namespace Microsoft.IdentityModel.Clients.ActiveDirectory
 
         public string SelfSignedJwtAudience { get; private set; }
 
+        public string PreferredCache { get; private set; }
+        public string[] Aliases { get; private set; }
+
         public Guid CorrelationId { get; set; }
+
+        public async Task<InstanceDiscoveryResponse> InstanceDiscoveryAsync(string discovererHost, string authorizeEndpoint, CallState callState)
+        {
+            string instanceDiscoveryEndpoint =
+                ("https://{host}/common/discovery/instance?api-version=1.0&authorization_endpoint=" + authorizeEndpoint)
+                    .Replace("{host}", discovererHost);
+            var client = new AdalHttpClient(instanceDiscoveryEndpoint, callState);
+            return await client.GetResponseAsync<InstanceDiscoveryResponse>().ConfigureAwait(false);
+        }
 
         public async Task UpdateFromTemplateAsync(CallState callState)
         {
             if (!this.updatedFromTemplate)
             {
                 var authorityUri = new Uri(this.Authority);
-                string host = authorityUri.Authority;
                 string path = authorityUri.AbsolutePath.Substring(1);
                 string tenant = path.Substring(0, path.IndexOf("/", StringComparison.Ordinal));
+                InstanceDiscoveryResponse discoveryResponse = null;
+                try // Always run instance discovery
+                {
+                    string instanceDiscoveryHost = WhitelistedAuthorities.Contains(authorityUri.Host) ? authorityUri.Host : DefaultTrustedAuthority;
+                    string tentativeAuthorizeEndpoint = AuthorizeEndpointTemplate.Replace("{host}", authorityUri.Host).Replace("{tenant}", tenant);
+                    discoveryResponse = await InstanceDiscoveryAsync(instanceDiscoveryHost, tentativeAuthorizeEndpoint, callState);
+                    if (this.ValidateAuthority & discoveryResponse.TenantDiscoveryEndpoint == null)
+                    { // hard stop here
+                        throw new AdalException(AdalError.AuthorityNotInValidList);
+                    }
+                }
+                catch (AdalServiceException ex)
+                {
+                    if (this.ValidateAuthority)
+                    { // hard stop here
+                        throw new AdalException((ex.ErrorCode == "invalid_instance") ? AdalError.AuthorityNotInValidList : AdalError.AuthorityValidationFailed, ex);
+                    }
+                }
+                string preferredNetwork = discoveryResponse?.PreferredNetwork ?? authorityUri.Host;
 
-                AuthenticatorTemplate matchingTemplate = await AuthenticatorTemplateList.FindMatchingItemAsync(this.ValidateAuthority, host, tenant, callState).ConfigureAwait(false);
-
-                this.AuthorizationUri = matchingTemplate.AuthorizeEndpoint.Replace("{tenant}", tenant);
-                this.DeviceCodeUri = matchingTemplate.DeviceCodeEndpoint.Replace("{tenant}", tenant);
-                this.TokenUri = matchingTemplate.TokenEndpoint.Replace("{tenant}", tenant);
-                this.UserRealmUri = CanonicalizeUri(matchingTemplate.UserRealmEndpoint);
+                this.AuthorizationUri = AuthorizeEndpointTemplate.Replace("{host}", preferredNetwork).Replace("{tenant}", tenant);
+                this.DeviceCodeUri = "https://{host}/{tenant}/oauth2/devicecode".Replace("{host}", preferredNetwork).Replace("{tenant}", tenant);
+                this.TokenUri = "https://{host}/{tenant}/oauth2/token".Replace("{host}", preferredNetwork).Replace("{tenant}", tenant);
+                this.UserRealmUri = CanonicalizeUri("https://{host}/common/UserRealm".Replace("{host}", preferredNetwork));
                 this.IsTenantless = (string.Compare(tenant, TenantlessTenantName, StringComparison.OrdinalIgnoreCase) == 0);
-                this.SelfSignedJwtAudience = matchingTemplate.Issuer.Replace("{tenant}", tenant);
+                this.SelfSignedJwtAudience = this.TokenUri;
                 this.updatedFromTemplate = true;
+                this.PreferredCache = discoveryResponse?.PreferredCache ?? authorityUri.Host;
+                this.Aliases = discoveryResponse?.Aliases;
             }
         }
 
@@ -105,7 +164,7 @@ namespace Microsoft.IdentityModel.Clients.ActiveDirectory
             if (this.IsTenantless && !string.IsNullOrWhiteSpace(tenantId))
             {
                 this.ReplaceTenantlessTenant(tenantId);
-                this.updatedFromTemplate = false;
+                // this.updatedFromTemplate = false;  // ???
             }
         }
 
