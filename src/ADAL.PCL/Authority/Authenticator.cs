@@ -70,8 +70,6 @@ namespace Microsoft.IdentityModel.Clients.ActiveDirectory
         private const string AuthorizeEndpointTemplate = "https://{host}/{tenant}/oauth2/authorize";
         private const string TenantlessTenantName = "Common";
 
-        private static readonly AuthenticatorTemplateList AuthenticatorTemplateList = new AuthenticatorTemplateList();
-
         private bool updatedFromTemplate; 
 
         public Authenticator(string authority, bool validateAuthority)

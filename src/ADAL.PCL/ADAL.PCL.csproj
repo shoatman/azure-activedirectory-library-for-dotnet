@@ -42,8 +42,6 @@
     <Compile Include="AuthenticationParameters.cs" />
     <Compile Include="AuthenticationResult.cs" />
     <Compile Include="Authority\Authenticator.cs" />
-    <Compile Include="Authority\AuthenticatorTemplate.cs" />
-    <Compile Include="Authority\AuthenticatorTemplateList.cs" />
     <Compile Include="Authority\AuthorizationResult.cs" />
     <Compile Include="Utilities\Base64UrlEncoder.cs" />
     <Compile Include="Cache\CacheQueryData.cs" />
