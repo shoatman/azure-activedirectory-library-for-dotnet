@@ -28,6 +28,7 @@
 using System;
 using System.Globalization;
 using System.Threading.Tasks;
+using Microsoft.IdentityModel.Clients.ActiveDirectory.Controllers;
 
 namespace Microsoft.IdentityModel.Clients.ActiveDirectory
 {
@@ -44,6 +45,7 @@ namespace Microsoft.IdentityModel.Clients.ActiveDirectory
     public sealed partial class AuthenticationContext
     {
         internal Authenticator Authenticator;
+        internal AuthenticationContextController Controller;
 
         /// <summary>
         /// Constructor to create the context with the address of the authority.
@@ -96,8 +98,11 @@ namespace Microsoft.IdentityModel.Clients.ActiveDirectory
         {
             // If authorityType is not provided (via first constructor), we validate by default (except for ASG and Office tenants).
             this.Authenticator = new Authenticator(authority, (validateAuthority != AuthorityValidationType.False));
-
             this.TokenCache = tokenCache;
+
+            
+
+            this.Controller = new AuthenticationContextController(this.TokenCache, this.Authenticator);
         }
 
         /// <summary>
@@ -454,17 +459,19 @@ namespace Microsoft.IdentityModel.Clients.ActiveDirectory
             Uri redirectUri, IPlatformParameters parameters, UserIdentifier userId, string extraQueryParameters = null,
             string claims = null)
         {
-            RequestData requestData = new RequestData
-            {
-                Authenticator = this.Authenticator,
-                TokenCache = this.TokenCache,
-                Resource = resource,
-                ClientKey = new ClientKey(clientId),
-                ExtendedLifeTimeEnabled = this.ExtendedLifeTimeEnabled,
-            };
-            var handler = new AcquireTokenInteractiveHandler(requestData, redirectUri, parameters, userId,
-                extraQueryParameters, this.CreateWebAuthenticationDialog(parameters), claims);
-            return await handler.RunAsync().ConfigureAwait(false);
+            //RequestData requestData = new RequestData
+            //{
+            //    Authenticator = this.Authenticator,
+            //    TokenCache = this.TokenCache,
+            //    Resource = resource,
+            //    ClientKey = new ClientKey(clientId),
+            //    ExtendedLifeTimeEnabled = this.ExtendedLifeTimeEnabled,
+            //};
+            //var handler = new AcquireTokenInteractiveHandler(requestData, redirectUri, parameters, userId,
+            //    extraQueryParameters, this.CreateWebAuthenticationDialog(parameters), claims);
+            //return await handler.RunAsync().ConfigureAwait(false);
+            Controllers.AuthenticationContextController acc = new AuthenticationContextController(this.TokenCache, this.Authenticator);
+            return await acc.AcquireTokenCommonAsync(resource, clientId, redirectUri, parameters, userId, extraQueryParameters, claims);
         }
 
         internal async Task<AuthenticationResult> AcquireTokenSilentCommonAsync(string resource, ClientKey clientKey,
